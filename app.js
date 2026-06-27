@@ -164,7 +164,64 @@ async function onBusinessBudgetChange() {
   }
 }
 
-// ---------- uploads ----------
+// ---------- date range ----------
+function pad(n) { return String(n).padStart(2, "0"); }
+function toIso(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+
+function computeRangeForPreset(preset) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (preset === "last7") {
+    const from = new Date(today); from.setDate(from.getDate() - 6);
+    return { from: toIso(from), to: toIso(today) };
+  }
+  if (preset === "last14") {
+    const from = new Date(today); from.setDate(from.getDate() - 13);
+    return { from: toIso(from), to: toIso(today) };
+  }
+  if (preset === "sinceMonday") {
+    const dow = today.getDay(); // 0 = Sunday
+    const daysSinceMonday = (dow + 6) % 7;
+    const from = new Date(today); from.setDate(from.getDate() - daysSinceMonday);
+    return { from: toIso(from), to: toIso(today) };
+  }
+  if (preset === "weekend") {
+    // most recent Saturday through most recent Sunday (or today if it's the weekend)
+    const dow = today.getDay();
+    const daysSinceSaturday = (dow + 1) % 7; // Sat=6 -> 0, Sun=0 -> 1, Mon=1 -> 2...
+    const sat = new Date(today); sat.setDate(sat.getDate() - daysSinceSaturday);
+    const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
+    const to = sun > today ? today : sun;
+    return { from: toIso(sat), to: toIso(to) };
+  }
+  return null; // custom
+}
+
+function getDateRange() {
+  const preset = el("dateRangePreset").value;
+  if (preset === "custom") {
+    const from = el("dateFrom").value.trim() || "1900-01-01";
+    const to = el("dateTo").value.trim() || "2999-12-31";
+    return { from, to };
+  }
+  return computeRangeForPreset(preset);
+}
+
+function updateDateRangeSummary() {
+  const { from, to } = getDateRange();
+  el("dateRangeSummary").textContent = `Checking transactions from ${from} to ${to}.`;
+}
+
+el("dateRangePreset").addEventListener("change", () => {
+  const isCustom = el("dateRangePreset").value === "custom";
+  el("customDateRow").classList.toggle("hidden", !isCustom);
+  if (!isCustom) updateDateRangeSummary();
+});
+el("dateFrom").addEventListener("input", updateDateRangeSummary);
+el("dateTo").addEventListener("input", updateDateRangeSummary);
+
+
 let bankFiles = [], ynabFile = null, amexFiles = [];
 
 el("bankFile").addEventListener("change", e => {
@@ -242,7 +299,44 @@ async function runMatch() {
     }
     state.historyModel = buildHistoryModel(historyTxns);
 
-    const result = findMissing(bankTxns, ynabTxns);
+    // Apply the date range filter to bank-side transactions before matching.
+    const { from, to } = getDateRange();
+    bankTxns = bankTxns.filter(t => t.date >= from && t.date <= to);
+
+    let result;
+    if (state.mode === "personal") {
+      // single account — match everything against the full YNAB export
+      result = findMissing(bankTxns, ynabTxns);
+    } else {
+      // Business mode: ING and AMEX must each be checked only against their
+      // OWN YNAB account's rows, never against each other's. Mixing them was
+      // the root cause of AMEX charges being flagged as missing from the
+      // Bodega ING account instead of the AMEX account.
+      const ingAccountName = state.business.accounts.find(a => a.id === state.business.accountIdING)?.name;
+      const amexAccountName = state.business.accounts.find(a => a.id === state.business.accountIdAMEX)?.name;
+
+      const ynabIng = ynabTxns.filter(t => t.account === ingAccountName);
+      const ynabAmex = ynabTxns.filter(t => t.account === amexAccountName);
+      const ynabOther = ynabTxns.filter(t => t.account !== ingAccountName && t.account !== amexAccountName);
+
+      const bankIng = bankTxns.filter(t => t.source === "ING");
+      const bankAmex = bankTxns.filter(t => t.source === "AMEX");
+
+      const resultIng = findMissing(bankIng, ynabIng);
+      const resultAmex = findMissing(bankAmex, ynabAmex);
+
+      result = {
+        missing: [...resultIng.missing, ...resultAmex.missing],
+        matchedCount: resultIng.matchedCount + resultAmex.matchedCount,
+        totalBank: bankTxns.length,
+        totalYnab: ynabTxns.length
+      };
+
+      if (ynabOther.length > 0) {
+        logLine(`Note: ${ynabOther.length} YNAB row(s) belong to neither the selected ING nor AMEX account and were ignored for matching.`, true);
+      }
+    }
+
     const categories = state.mode === "personal" ? state.personal.categories : state.business.categories;
 
     state.lastMatchResult = result.missing.map((m, idx) => {
@@ -262,7 +356,7 @@ async function runMatch() {
       };
     });
 
-    renderSummary(result, bankTxns.length);
+    renderSummary(result, bankTxns.length, { from, to });
     renderReviewTable(categories);
     el("resultsArea").classList.remove("hidden");
     setStatus("matchStatus", `Done — ${result.missing.length} gap(s) found out of ${bankTxns.length} bank transactions.`, "ok");
@@ -272,9 +366,9 @@ async function runMatch() {
   }
 }
 
-function renderSummary(result, totalBank) {
+function renderSummary(result, totalBank, range) {
   el("summaryBar").innerHTML = `
-    <div class="summary-stat"><div class="num">${totalBank}</div><div class="label">Bank transactions</div></div>
+    <div class="summary-stat"><div class="num">${totalBank}</div><div class="label">Bank transactions (${range.from} → ${range.to})</div></div>
     <div class="summary-stat"><div class="num">${result.matchedCount}</div><div class="label">Already in YNAB</div></div>
     <div class="summary-stat"><div class="num">${result.missing.length}</div><div class="label">Missing — need review</div></div>
   `;
@@ -456,4 +550,11 @@ function logLine(text, clear = false) {
     connect();
   }
   setMode("personal");
+
+  // sensible custom-range defaults so the fields aren't blank if selected
+  const today = new Date();
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 6);
+  el("dateFrom").value = toIso(weekAgo);
+  el("dateTo").value = toIso(today);
+  updateDateRangeSummary();
 })();

@@ -382,7 +382,31 @@
   </div>
 
   <div id="uploadPanel" class="panel hidden">
-    <h2 id="uploadHeading">Upload this week's files</h2>
+    <h2 id="uploadHeading">Upload files to reconcile</h2>
+
+    <label class="field-label">Date range to check</label>
+    <div class="row" style="margin-bottom: 6px;">
+      <div>
+        <select id="dateRangePreset">
+          <option value="weekend">This weekend (Sat–Sun)</option>
+          <option value="last7">Last 7 days</option>
+          <option value="last14">Last 14 days</option>
+          <option value="sinceMonday">Since Monday</option>
+          <option value="custom">Custom range…</option>
+        </select>
+      </div>
+    </div>
+    <div class="row hidden" id="customDateRow" style="margin-bottom: 14px;">
+      <div>
+        <label class="field-label">From</label>
+        <input type="text" id="dateFrom" placeholder="YYYY-MM-DD">
+      </div>
+      <div>
+        <label class="field-label">To</label>
+        <input type="text" id="dateTo" placeholder="YYYY-MM-DD">
+      </div>
+    </div>
+    <div class="help-text" id="dateRangeSummary"></div>
 
     <div id="uploadGrid">
       <div class="row">
