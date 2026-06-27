@@ -242,9 +242,15 @@ el("amexFile").addEventListener("change", e => {
 
 function refreshUploadReady() {
   const baseReady = bankFiles.length > 0 && ynabFile !== null;
-  const budgetReady = state.mode === "personal"
-    ? !!state.personal.budgetId && !!state.personal.accountId
-    : !!state.business.budgetId && !!state.business.accountIdING && !!state.business.accountIdAMEX;
+  let budgetReady;
+  if (state.mode === "personal") {
+    budgetReady = !!state.personal.budgetId && !!state.personal.accountId;
+  } else {
+    // AMEX account only required if an AMEX file has actually been uploaded —
+    // lets you reconcile just the Bodega ING side on its own.
+    const amexReady = amexFiles.length === 0 || !!state.business.accountIdAMEX;
+    budgetReady = !!state.business.budgetId && !!state.business.accountIdING && amexReady;
+  }
   el("uploadPanel").classList.toggle("hidden", !budgetReady);
   el("btnRunMatch").disabled = !(baseReady && budgetReady);
 }
@@ -332,7 +338,7 @@ async function runMatch() {
         totalYnab: ynabTxns.length
       };
 
-      if (ynabOther.length > 0) {
+      if (state.business.accountIdAMEX && ynabOther.length > 0) {
         logLine(`Note: ${ynabOther.length} YNAB row(s) belong to neither the selected ING nor AMEX account and were ignored for matching.`, true);
       }
     }
@@ -377,7 +383,12 @@ function renderSummary(result, totalBank, range) {
 function renderReviewTable(categories) {
   const rows = state.lastMatchResult;
   if (rows.length === 0) {
-    el("reviewTableWrap").innerHTML = `<div class="empty-state"><div class="big">Nothing missing</div>Every bank transaction in this file already has a match in YNAB.</div>`;
+    const { from, to } = getDateRange();
+    el("reviewTableWrap").innerHTML = `
+      <div class="empty-state">
+        <div class="big">✓ Fully reconciled</div>
+        Every transaction from ${from} to ${to} is already in YNAB. Nothing to sync.
+      </div>`;
     el("btnSync").disabled = true;
     return;
   }
