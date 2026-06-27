@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reconciler</title>
+<style>
+  :root {
+    --bg: #f7f5f1;
+    --panel: #ffffff;
+    --ink: #1f2421;
+    --ink-soft: #5b6460;
+    --line: #e2ddd3;
+    --accent: #2d5c4d;
+    --accent-soft: #e8f0ec;
+    --warn: #a8501f;
+    --warn-soft: #fbeee5;
+    --good: #2d5c4d;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Inter", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+
+  header.top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 16px;
+  }
+
+  header.top h1 {
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+
+  header.top .sub {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    font-family: var(--mono);
+  }
+
+  .mode-toggle {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 3px;
+    margin-bottom: 24px;
+  }
+
+  .mode-toggle button {
+    border: none;
+    background: transparent;
+    padding: 8px 18px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+
+  .mode-toggle button.active {
+    background: var(--accent);
+    color: white;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px;
+    margin-bottom: 18px;
+  }
+
+  .panel h2 {
+    font-size: 14px;
+    font-weight: 650;
+    margin: 0 0 14px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--ink-soft);
+  }
+
+  label.field-label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    margin-bottom: 6px;
+  }
+
+  input[type="text"], input[type="password"], select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    font-size: 14px;
+    background: #fdfcfa;
+    color: var(--ink);
+    margin-bottom: 14px;
+    font-family: inherit;
+  }
+
+  input:focus, select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .row { display: flex; gap: 14px; }
+  .row > div { flex: 1; }
+
+  button.primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 11px 22px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  button.primary:disabled {
+    background: #b9c4bf;
+    cursor: not-allowed;
+  }
+
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  button.ghost {
+    background: transparent;
+    border: none;
+    color: var(--ink-soft);
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 4px 0;
+  }
+
+  .upload-zone {
+    border: 1.5px dashed var(--line);
+    border-radius: 10px;
+    padding: 24px;
+    text-align: center;
+    background: #fdfcfa;
+    margin-bottom: 12px;
+  }
+
+  .upload-zone .filename {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--accent);
+    margin-top: 8px;
+  }
+
+  .status-line {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: 10px;
+  }
+
+  .status-line.error { color: var(--warn); }
+  .status-line.ok { color: var(--good); }
+
+  table.review {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+
+  table.review th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--ink-soft);
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  table.review td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  table.review tr.excluded { opacity: .4; }
+
+  table.review input[type="text"], table.review select {
+    margin-bottom: 0;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+
+  .amt { font-family: var(--mono); white-space: nowrap; text-align: right; }
+  .amt.out { color: var(--warn); }
+  .amt.in { color: var(--good); }
+
+  .badge {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 650;
+    padding: 2px 7px;
+    border-radius: 5px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+
+  .badge.guess-high { background: var(--accent-soft); color: var(--accent); }
+  .badge.guess-low { background: var(--warn-soft); color: var(--warn); }
+  .badge.recurring { background: #eef0fb; color: #3c4a9e; }
+
+  .summary-bar {
+    display: flex;
+    gap: 18px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+
+  .summary-stat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 16px;
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .summary-stat .num {
+    font-size: 22px;
+    font-weight: 700;
+    font-family: var(--mono);
+  }
+
+  .summary-stat .label {
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-top: 2px;
+  }
+
+  .checkbox-cell { text-align: center; width: 32px; }
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+  }
+
+  .sync-bar {
+    position: sticky;
+    bottom: 0;
+    background: linear-gradient(to top, var(--bg) 70%, transparent);
+    padding: 18px 0 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--ink-soft);
+  }
+
+  .empty-state .big { font-size: 15px; color: var(--ink); margin-bottom: 6px; font-weight: 600; }
+
+  .hidden { display: none !important; }
+
+  .month-divider {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    padding: 14px 10px 6px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .log-box {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: #1f2421;
+    color: #d9e6df;
+    border-radius: 8px;
+    padding: 14px;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-top: 12px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  .pill-input-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+
+  .pill-input-group input { margin-bottom: 0; }
+
+  .help-text {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin: -8px 0 14px;
+  }
+
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <header class="top">
+    <h1>Reconciler</h1>
+    <div class="sub" id="modeLabel">personal · bank → ynab</div>
+  </header>
+
+  <div class="mode-toggle">
+    <button id="btnPersonal" class="active">Personal</button>
+    <button id="btnBusiness">Business · Bodega</button>
+  </div>
+
+  <div id="setupPanel" class="panel">
+    <h2>Connect YNAB</h2>
+    <label class="field-label">Personal Access Token</label>
+    <div class="pill-input-group">
+      <input type="password" id="tokenInput" placeholder="Paste your YNAB token">
+      <button class="secondary" id="btnConnect">Connect</button>
+    </div>
+    <div class="help-text">Stored only in this browser's local storage. Get a token from YNAB → Account Settings → Developer Settings.</div>
+
+    <div id="budgetPickers" class="hidden">
+      <div class="row">
+        <div id="personalBudgetRow">
+          <label class="field-label">Personal budget</label>
+          <select id="personalBudgetSelect"></select>
+          <label class="field-label">Account to post to</label>
+          <select id="personalAccountSelect"></select>
+        </div>
+        <div id="businessBudgetRow" class="hidden">
+          <label class="field-label">Bodega budget</label>
+          <select id="businessBudgetSelect"></select>
+          <label class="field-label">ING (Bodega) account</label>
+          <select id="businessIngAccountSelect"></select>
+          <label class="field-label">AMEX account</label>
+          <select id="businessAmexAccountSelect"></select>
+        </div>
+      </div>
+    </div>
+    <div class="status-line" id="connectStatus"></div>
+  </div>
+
+  <div id="uploadPanel" class="panel hidden">
+    <h2 id="uploadHeading">Upload this week's files</h2>
+
+    <div id="uploadGrid">
+      <div class="row">
+        <div>
+          <label class="field-label" id="bankLabel">Bank statement (ING CSV)</label>
+          <div class="upload-zone">
+            <input type="file" id="bankFile" accept=".csv" multiple style="width:100%">
+            <div class="filename" id="bankFileName"></div>
+          </div>
+        </div>
+        <div id="ynabUploadCol">
+          <label class="field-label">YNAB export (CSV)</label>
+          <div class="upload-zone">
+            <input type="file" id="ynabFile" accept=".csv" style="width:100%">
+            <div class="filename" id="ynabFileName"></div>
+          </div>
+        </div>
+      </div>
+      <div id="amexRow" class="hidden">
+        <label class="field-label">AMEX statement(s) — multiple OK, overlaps auto-deduped</label>
+        <div class="upload-zone">
+          <input type="file" id="amexFile" accept=".csv" multiple style="width:100%">
+          <div class="filename" id="amexFileName"></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="primary" id="btnRunMatch" disabled>Find discrepancies</button>
+    <div class="status-line" id="matchStatus"></div>
+  </div>
+
+  <div id="resultsArea" class="hidden">
+    <div class="summary-bar" id="summaryBar"></div>
+    <div class="panel" style="padding: 0; overflow: hidden;">
+      <div style="padding: 22px 22px 0;">
+        <h2 style="display:inline-block">Missing from YNAB</h2>
+      </div>
+      <div id="reviewTableWrap" style="padding: 0 22px 22px;"></div>
+    </div>
+
+    <div class="sync-bar">
+      <div class="status-line" id="syncStatus"></div>
+      <button class="primary" id="btnSync">Sync selected to YNAB</button>
+    </div>
+
+    <div id="logBox" class="log-box hidden"></div>
+  </div>
+</div>
+
+<script src="ynab-client.js"></script>
+<script src="parsers.js"></script>
+<script src="matcher.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
