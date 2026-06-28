@@ -54,6 +54,9 @@ function setMode(mode) {
   el("bankLabel").textContent = mode === "personal"
     ? "Bank statement (ING CSV)"
     : "Bodega ING statement (CSV)";
+  el("bankOptionalHint").textContent = mode === "business"
+    ? "Optional — leave blank if you're only reconciling AMEX right now."
+    : "";
 
   resetResults();
   refreshUploadReady();
@@ -241,15 +244,22 @@ el("amexFile").addEventListener("change", e => {
 });
 
 function refreshUploadReady() {
-  const baseReady = bankFiles.length > 0 && ynabFile !== null;
-  let budgetReady;
+  let baseReady, budgetReady;
   if (state.mode === "personal") {
+    baseReady = bankFiles.length > 0 && ynabFile !== null;
     budgetReady = !!state.personal.budgetId && !!state.personal.accountId;
   } else {
-    // AMEX account only required if an AMEX file has actually been uploaded —
-    // lets you reconcile just the Bodega ING side on its own.
-    const amexReady = amexFiles.length === 0 || !!state.business.accountIdAMEX;
-    budgetReady = !!state.business.budgetId && !!state.business.accountIdING && amexReady;
+    // Business mode: ING and AMEX are each independently optional — you might
+    // be reconciling just one side. At least one bank source (ING file or
+    // AMEX file) plus the YNAB export is required; whichever account(s)
+    // correspond to the file(s) you've actually uploaded must be selected.
+    const hasIngFile = bankFiles.length > 0;
+    const hasAmexFile = amexFiles.length > 0;
+    baseReady = (hasIngFile || hasAmexFile) && ynabFile !== null;
+
+    const ingReady = !hasIngFile || !!state.business.accountIdING;
+    const amexReady = !hasAmexFile || !!state.business.accountIdAMEX;
+    budgetReady = !!state.business.budgetId && ingReady && amexReady;
   }
   el("uploadPanel").classList.toggle("hidden", !budgetReady);
   el("btnRunMatch").disabled = !(baseReady && budgetReady);
@@ -338,7 +348,7 @@ async function runMatch() {
         totalYnab: ynabTxns.length
       };
 
-      if (state.business.accountIdAMEX && ynabOther.length > 0) {
+      if (state.business.accountIdING && state.business.accountIdAMEX && ynabOther.length > 0) {
         logLine(`Note: ${ynabOther.length} YNAB row(s) belong to neither the selected ING nor AMEX account and were ignored for matching.`, true);
       }
     }
