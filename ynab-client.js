@@ -56,7 +56,16 @@ const YnabClient = {
       .map(a => ({ id: a.id, name: a.name, type: a.type, on_budget: a.on_budget }));
   },
 
-  // Returns flattened list of leaf categories (excludes category groups themselves)
+  // Returns list of all payees in a budget [{id, name}]
+  async listPayees(budgetId) {
+    const data = await this._get(`/budgets/${budgetId}/payees`);
+    return data.data.payees
+      .filter(p => !p.deleted)
+      .map(p => ({ id: p.id, name: p.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+
+
   // [{id, name, group, group_id}]
   async listCategories(budgetId) {
     const data = await this._get(`/budgets/${budgetId}/categories`);

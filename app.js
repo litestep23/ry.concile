@@ -6,8 +6,8 @@ const state = {
   mode: "personal", // 'personal' | 'business'
   token: null,
   budgets: [],
-  personal: { budgetId: null, accountId: null, accountIdNAB: null, accounts: [], categories: [] },
-  business: { budgetId: null, accountIdING: null, accountIdAMEX: null, accounts: [], categories: [] },
+  personal: { budgetId: null, accountId: null, accountIdNAB: null, accounts: [], categories: [], payees: [] },
+  business: { budgetId: null, accountIdING: null, accountIdAMEX: null, accounts: [], categories: [], payees: [] },
   historyModel: null,
   lastMatchResult: null, // array of review rows
 };
@@ -136,6 +136,7 @@ async function onPersonalBudgetChange() {
     state.personal.accountIdNAB = el("personalNabAccountSelect").value || null;
 
     state.personal.categories = await YnabClient.listCategories(budgetId);
+    state.personal.payees = await YnabClient.listPayees(budgetId);
     refreshUploadReady();
   } catch (e) {
     setStatus("connectStatus", e.message, "error");
@@ -172,6 +173,7 @@ async function onBusinessBudgetChange() {
     });
 
     state.business.categories = await YnabClient.listCategories(budgetId);
+    state.business.payees = await YnabClient.listPayees(budgetId);
     refreshUploadReady();
   } catch (e) {
     setStatus("connectStatus", e.message, "error");
@@ -409,6 +411,7 @@ async function runMatch() {
     }
 
     const categories = state.mode === "personal" ? state.personal.categories : state.business.categories;
+    const payees = state.mode === "personal" ? state.personal.payees : state.business.payees;
 
     state.lastMatchResult = result.missing.map((m, idx) => {
       const guess = guessForTransaction(m.desc, state.historyModel);
@@ -427,7 +430,7 @@ async function runMatch() {
     });
 
     renderSummary(result, bankTxns.length, { from, to });
-    renderReviewTable(categories);
+    renderReviewTable(categories, payees);
     el("resultsArea").classList.remove("hidden");
     setStatus("matchStatus", `Done — ${result.missing.length} gap(s) found out of ${bankTxns.length} bank transactions.`, "ok");
   } catch (e) {
@@ -444,7 +447,7 @@ function renderSummary(result, totalBank, range) {
   `;
 }
 
-function renderReviewTable(categories) {
+function renderReviewTable(categories, payees) {
   const rows = state.lastMatchResult;
   if (rows.length === 0) {
     const { from, to } = getDateRange();
@@ -457,23 +460,31 @@ function renderReviewTable(categories) {
     return;
   }
 
-  // group categories by their YNAB category group for a cleaner dropdown,
-  // with a "+ Create new category…" option always at the bottom.
+  // build category options grouped by YNAB group
   const byGroup = {};
   categories.forEach(c => {
     if (!byGroup[c.group]) byGroup[c.group] = [];
     byGroup[c.group].push(c);
   });
-  const catOptionsHtml = Object.entries(byGroup)
-    .map(([group, cats]) => {
-      const opts = cats.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
-      return `<optgroup label="${escapeHtml(group)}">${opts}</optgroup>`;
-    })
-    .join("") + `<option value="__new__">+ Create new category…</option>`;
 
   const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
 
-  let html = `<table class="review"><thead><tr>
+  // filter bar + sort controls
+  let filterHtml = `
+    <div class="review-controls" style="display:flex;gap:10px;align-items:center;padding:14px 0 10px;flex-wrap:wrap;">
+      <input type="text" id="reviewFilter" placeholder="Filter by payee, date or amount…" style="flex:1;min-width:200px;margin-bottom:0;">
+      <div style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink-soft);">
+        Sort:
+        <button class="sort-btn active" data-sort="date">Date</button>
+        <button class="sort-btn" data-sort="amount">Amount</button>
+        <button class="sort-btn" data-sort="payee">Payee</button>
+      </div>
+      <label style="font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="selectAll" checked> Select all
+      </label>
+    </div>`;
+
+  let tableHtml = `<table class="review" id="reviewTable"><thead><tr>
     <th class="checkbox-cell"></th>
     <th>Date</th>
     <th>Bank description</th>
@@ -487,17 +498,22 @@ function renderReviewTable(categories) {
     const amtClass = r.amount < 0 ? "out" : "in";
     const confBadge = r.confidence === "high"
       ? `<span class="badge guess-high">matched history</span>`
-      : `<span class="badge guess-low">no history match</span>`;
-    html += `<tr data-id="${r.id}">
+      : `<span class="badge guess-low">no history</span>`;
+
+    tableHtml += `<tr data-id="${r.id}" data-date="${r.date}" data-amount="${r.amount}" data-payee="${escapeHtml(r.payee)}">
       <td class="checkbox-cell"><input type="checkbox" class="rowInclude" checked></td>
-      <td>${r.date}<br>${confBadge}</td>
-      <td style="max-width:180px;font-size:12px;color:var(--ink-soft)">${escapeHtml(r.rawDesc)}</td>
-      <td><input type="text" class="rowPayee" value="${escapeHtml(r.payee)}"></td>
-      <td>
-        <select class="rowCategory">
-          <option value="">No category</option>
-          ${catOptionsHtml}
-        </select>
+      <td style="white-space:nowrap">${r.date}<br>${confBadge}</td>
+      <td style="max-width:160px;font-size:12px;color:var(--ink-soft)">${escapeHtml(r.rawDesc)}</td>
+      <td style="min-width:160px">
+        <div class="payee-typeahead" style="position:relative">
+          <input type="text" class="rowPayee" value="${escapeHtml(r.payee)}" placeholder="Search payees…" autocomplete="off">
+          <div class="payee-dropdown hidden"></div>
+        </div>
+      </td>
+      <td style="min-width:180px">
+        <input type="text" class="rowCategorySearch" placeholder="Type to search…" autocomplete="off">
+        <input type="hidden" class="rowCategoryId">
+        <div class="cat-dropdown hidden"></div>
         <div class="newCategoryForm hidden" style="margin-top:6px;">
           <input type="text" class="newCategoryName" placeholder="New category name" style="margin-bottom:4px;">
           <select class="newCategoryGroup" style="margin-bottom:4px;"></select>
@@ -506,99 +522,249 @@ function renderReviewTable(categories) {
         </div>
       </td>
       <td><input type="text" class="rowMemo" value="${escapeHtml(r.memo)}"></td>
-      <td class="amt ${amtClass}">${formatMoney(r.amount)}</td>
+      <td class="amt ${amtClass}" style="white-space:nowrap">${formatMoney(r.amount)}</td>
     </tr>`;
   }
-  html += "</tbody></table>";
-  el("reviewTableWrap").innerHTML = html;
+  tableHtml += "</tbody></table>";
 
-  // pre-select guessed category directly by ID — no fuzzy text matching needed
+  el("reviewTableWrap").innerHTML = filterHtml + tableHtml;
+
+  // pre-fill category search text and hidden ID from guess
   sorted.forEach(r => {
     if (!r.categoryId) return;
+    const cat = categories.find(c => c.id === r.categoryId);
+    if (!cat) return;
     const tr = document.querySelector(`tr[data-id="${r.id}"]`);
-    const sel = tr.querySelector(".rowCategory");
-    sel.value = r.categoryId;
+    tr.querySelector(".rowCategorySearch").value = cat.fullLabel;
+    tr.querySelector(".rowCategoryId").value = cat.id;
   });
 
-  wireCategoryDropdowns(categories);
+  wirePayeeTypeaheads(payees);
+  wireCategoryTypeaheads(categories, byGroup);
+  wireFilterAndSort(sorted);
+  wireSelectAll();
   el("btnSync").disabled = false;
 }
 
-// Wires up "+ Create new category…" behaviour for every row's dropdown.
-function wireCategoryDropdowns(categories) {
+// ---------- payee typeahead ----------
+function wirePayeeTypeaheads(payees) {
+  document.querySelectorAll(".payee-typeahead").forEach(wrap => {
+    const input = wrap.querySelector(".rowPayee");
+    const dropdown = wrap.querySelector(".payee-dropdown");
+
+    function showPayees(q) {
+      const matches = q.length === 0
+        ? payees.slice(0, 8)
+        : payees.filter(p => p.name.toLowerCase().includes(q.toLowerCase())).slice(0, 10);
+
+      if (matches.length === 0) { dropdown.classList.add("hidden"); return; }
+      dropdown.innerHTML = matches
+        .map(p => `<div class="dd-item" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>`)
+        .join("") + `<div class="dd-item dd-new" data-name="${escapeHtml(input.value)}">+ Use "<strong>${escapeHtml(input.value)}</strong>" as new payee</div>`;
+      dropdown.classList.remove("hidden");
+    }
+
+    input.addEventListener("focus", () => showPayees(input.value));
+    input.addEventListener("input", () => showPayees(input.value));
+    input.addEventListener("keydown", e => {
+      const items = [...dropdown.querySelectorAll(".dd-item")];
+      const active = dropdown.querySelector(".dd-item.active");
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = active ? (items[items.indexOf(active) + 1] || items[0]) : items[0];
+        active?.classList.remove("active"); next?.classList.add("active");
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = active ? (items[items.indexOf(active) - 1] || items[items.length - 1]) : items[items.length - 1];
+        active?.classList.remove("active"); prev?.classList.add("active");
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const sel = dropdown.querySelector(".dd-item.active") || dropdown.querySelector(".dd-item");
+        if (sel) { input.value = sel.dataset.name; dropdown.classList.add("hidden"); }
+      } else if (e.key === "Escape") {
+        dropdown.classList.add("hidden");
+      }
+    });
+    dropdown.addEventListener("mousedown", e => {
+      const item = e.target.closest(".dd-item");
+      if (item) { input.value = item.dataset.name; dropdown.classList.add("hidden"); }
+    });
+    document.addEventListener("click", e => {
+      if (!wrap.contains(e.target)) dropdown.classList.add("hidden");
+    }, { capture: true });
+  });
+}
+
+// ---------- category typeahead ----------
+function wireCategoryTypeaheads(categories, byGroup) {
   const groupNames = [...new Set(categories.map(c => c.group))];
+
   document.querySelectorAll("tr[data-id]").forEach(tr => {
-    const select = tr.querySelector(".rowCategory");
-    const form = tr.querySelector(".newCategoryForm");
-    const nameInput = tr.querySelector(".newCategoryName");
-    const groupSelect = tr.querySelector(".newCategoryGroup");
+    const input = tr.querySelector(".rowCategorySearch");
+    const hiddenId = tr.querySelector(".rowCategoryId");
+    const dropdown = tr.querySelector(".cat-dropdown");
+    const newForm = tr.querySelector(".newCategoryForm");
+    const newName = tr.querySelector(".newCategoryName");
+    const newGroup = tr.querySelector(".newCategoryGroup");
     const confirmBtn = tr.querySelector(".newCategoryConfirm");
     const cancelBtn = tr.querySelector(".newCategoryCancel");
 
-    groupSelect.innerHTML = groupNames.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
+    newGroup.innerHTML = groupNames.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
 
-    select.addEventListener("change", () => {
-      if (select.value === "__new__") {
-        form.classList.remove("hidden");
-        select.classList.add("hidden");
-        nameInput.focus();
+    function showCats(q) {
+      const lower = q.toLowerCase();
+      const matches = q.length === 0
+        ? categories.slice(0, 12)
+        : categories.filter(c =>
+            c.name.toLowerCase().includes(lower) ||
+            c.group.toLowerCase().includes(lower) ||
+            c.fullLabel.toLowerCase().includes(lower)
+          ).slice(0, 12);
+
+      let html = matches.map(c =>
+        `<div class="dd-item" data-id="${c.id}" data-label="${escapeHtml(c.fullLabel)}">`+
+        `<span style="font-size:11px;color:var(--ink-soft)">${escapeHtml(c.group)}</span><br>${escapeHtml(c.name)}</div>`
+      ).join("");
+      html += `<div class="dd-item dd-new" data-id="__new__">+ Create new category…</div>`;
+      if (matches.length === 0 && q.length > 0) {
+        html = `<div class="dd-item" style="color:var(--ink-soft);pointer-events:none">No match — </div>` + html;
+      }
+      dropdown.innerHTML = html;
+      dropdown.classList.remove("hidden");
+    }
+
+    function clearCat() {
+      hiddenId.value = "";
+      input.value = "";
+    }
+
+    input.addEventListener("focus", () => showCats(input.value));
+    input.addEventListener("input", () => { hiddenId.value = ""; showCats(input.value); });
+    input.addEventListener("keydown", e => {
+      const items = [...dropdown.querySelectorAll(".dd-item:not([style*='pointer-events:none'])")];
+      const active = dropdown.querySelector(".dd-item.active");
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = active ? (items[items.indexOf(active) + 1] || items[0]) : items[0];
+        active?.classList.remove("active"); next?.classList.add("active");
+        next?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = active ? (items[items.indexOf(active) - 1] || items[items.length - 1]) : items[items.length - 1];
+        active?.classList.remove("active"); prev?.classList.add("active");
+        prev?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const sel = dropdown.querySelector(".dd-item.active") || dropdown.querySelector(".dd-item");
+        if (sel) pickCat(sel);
+      } else if (e.key === "Escape") {
+        dropdown.classList.add("hidden");
+      } else if (e.key === "Backspace" && input.value === "") {
+        clearCat();
       }
     });
 
-    cancelBtn.addEventListener("click", () => {
-      form.classList.add("hidden");
-      select.classList.remove("hidden");
-      select.value = "";
-    });
+    function pickCat(item) {
+      if (item.dataset.id === "__new__") {
+        dropdown.classList.add("hidden");
+        input.classList.add("hidden");
+        newForm.classList.remove("hidden");
+        newName.value = input.value;
+        newName.focus();
+        return;
+      }
+      hiddenId.value = item.dataset.id;
+      input.value = item.dataset.label;
+      dropdown.classList.add("hidden");
+    }
 
+    dropdown.addEventListener("mousedown", e => {
+      e.preventDefault();
+      const item = e.target.closest(".dd-item");
+      if (item) pickCat(item);
+    });
+    document.addEventListener("click", e => {
+      if (!tr.querySelector("td:nth-child(5)").contains(e.target)) dropdown.classList.add("hidden");
+    }, { capture: true });
+
+    // create new category inline
     confirmBtn.addEventListener("click", async () => {
-      const name = nameInput.value.trim();
-      if (!name) { nameInput.focus(); return; }
-      const groupName = groupSelect.value;
+      const name = newName.value.trim();
+      if (!name) { newName.focus(); return; }
+      const groupName = newGroup.value;
       const group = categories.find(c => c.group === groupName);
       const budgetId = state.mode === "personal" ? state.personal.budgetId : state.business.budgetId;
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = "Creating…";
+      confirmBtn.disabled = true; confirmBtn.textContent = "Creating…";
       try {
         const newCat = await YnabClient.createCategory(budgetId, group.group_id, name);
         const fullNewCat = { id: newCat.id, name: newCat.name, group: groupName, group_id: group.group_id, fullLabel: `${groupName}: ${newCat.name}` };
-        // add to the live category list so it's available in every row's dropdown immediately
         categories.push(fullNewCat);
         if (state.mode === "personal") state.personal.categories.push(fullNewCat);
         else state.business.categories.push(fullNewCat);
-
-        // refresh this select's options to include the new category, then select it
-        const optgroup = select.querySelector(`optgroup[label="${groupName}"]`)
-          || (() => { const og = document.createElement("optgroup"); og.label = groupName; select.insertBefore(og, select.lastElementChild); return og; })();
-        const opt = document.createElement("option");
-        opt.value = newCat.id;
-        opt.textContent = newCat.name;
-        optgroup.appendChild(opt);
-
-        // also add it to every OTHER row's dropdown so it's usable everywhere without a full re-render
-        document.querySelectorAll("tr[data-id] .rowCategory").forEach(otherSelect => {
-          if (otherSelect === select) return;
-          let og = otherSelect.querySelector(`optgroup[label="${groupName}"]`);
-          if (!og) {
-            og = document.createElement("optgroup");
-            og.label = groupName;
-            otherSelect.insertBefore(og, otherSelect.lastElementChild);
-          }
-          const o = document.createElement("option");
-          o.value = newCat.id;
-          o.textContent = newCat.name;
-          og.appendChild(o);
-        });
-
-        select.value = newCat.id;
-        form.classList.add("hidden");
-        select.classList.remove("hidden");
+        hiddenId.value = newCat.id;
+        input.value = fullNewCat.fullLabel;
+        input.classList.remove("hidden");
+        newForm.classList.add("hidden");
       } catch (e) {
         alert(`Couldn't create category: ${e.message}`);
       } finally {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = "Create";
+        confirmBtn.disabled = false; confirmBtn.textContent = "Create";
       }
+    });
+    cancelBtn.addEventListener("click", () => {
+      newForm.classList.add("hidden");
+      input.classList.remove("hidden");
+      input.focus();
+    });
+  });
+}
+
+// ---------- filter + sort ----------
+let currentSort = "date";
+let currentSortAsc = true;
+
+function wireFilterAndSort(initialRows) {
+  const filterInput = el("reviewFilter");
+  const sortBtns = document.querySelectorAll(".sort-btn");
+
+  function applyFilterSort() {
+    const q = filterInput.value.toLowerCase();
+    const trs = Array.from(document.querySelectorAll("#reviewTable tbody tr"));
+    trs.forEach(tr => {
+      const payee = tr.dataset.payee.toLowerCase();
+      const date = tr.dataset.date;
+      const amount = tr.dataset.amount;
+      const visible = !q || payee.includes(q) || date.includes(q) || amount.includes(q);
+      tr.style.display = visible ? "" : "none";
+    });
+    // sort visible rows
+    const visible = trs.filter(tr => tr.style.display !== "none");
+    visible.sort((a, b) => {
+      let va, vb;
+      if (currentSort === "date") { va = a.dataset.date; vb = b.dataset.date; }
+      else if (currentSort === "amount") { va = parseFloat(a.dataset.amount); vb = parseFloat(b.dataset.amount); }
+      else { va = a.dataset.payee.toLowerCase(); vb = b.dataset.payee.toLowerCase(); }
+      return currentSortAsc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+    });
+    const tbody = document.querySelector("#reviewTable tbody");
+    visible.forEach(tr => tbody.appendChild(tr));
+  }
+
+  filterInput.addEventListener("input", applyFilterSort);
+  sortBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (currentSort === btn.dataset.sort) { currentSortAsc = !currentSortAsc; }
+      else { currentSort = btn.dataset.sort; currentSortAsc = true; }
+      sortBtns.forEach(b => b.classList.toggle("active", b.dataset.sort === currentSort));
+      applyFilterSort();
+    });
+  });
+}
+
+function wireSelectAll() {
+  el("selectAll").addEventListener("change", e => {
+    document.querySelectorAll(".rowInclude").forEach(cb => {
+      if (cb.closest("tr").style.display !== "none") cb.checked = e.target.checked;
     });
   });
 }
@@ -620,7 +786,7 @@ async function syncToYnab() {
     const id = parseInt(tr.dataset.id, 10);
     const row = state.lastMatchResult.find(r => r.id === id);
     const payee = tr.querySelector(".rowPayee").value.trim();
-    const categoryId = tr.querySelector(".rowCategory").value || null;
+    const categoryId = tr.querySelector(".rowCategoryId")?.value || null;
     const memo = tr.querySelector(".rowMemo").value.trim();
 
     // Route to the correct YNAB account based on source type
@@ -763,7 +929,35 @@ function logLine(text, clear = false) {
   box.scrollTop = box.scrollHeight;
 }
 
-// ---------- init ----------
+// ---------- drag and drop ----------
+function setupDragDrop(zoneId, fileInputId, fileNameId, onFiles) {
+  const zone = document.getElementById(zoneId)?.closest('.upload-zone');
+  if (!zone) return;
+  ['dragenter','dragover'].forEach(evt => {
+    zone.addEventListener(evt, e => { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; zone.style.background = 'var(--accent-soft)'; });
+  });
+  ['dragleave','drop'].forEach(evt => {
+    zone.addEventListener(evt, e => { e.preventDefault(); zone.style.borderColor = ''; zone.style.background = ''; });
+  });
+  zone.addEventListener('drop', e => {
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv'));
+    if (files.length === 0) return;
+    // inject into the file input so the existing change handler fires
+    const dt = new DataTransfer();
+    files.forEach(f => dt.items.add(f));
+    const input = document.getElementById(fileInputId);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change'));
+  });
+}
+
+// set up drag-drop for all upload zones after DOM is ready
+setTimeout(() => {
+  setupDragDrop('bankFile', 'bankFile', 'bankFileName');
+  setupDragDrop('ynabFile', 'ynabFile', 'ynabFileName');
+  setupDragDrop('amexFile', 'amexFile', 'amexFileName');
+  setupDragDrop('nabFile', 'nabFile', 'nabFileName');
+}, 0);
 (function init() {
   const saved = loadLocal();
   if (saved?.token) {
