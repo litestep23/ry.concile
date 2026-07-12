@@ -365,8 +365,10 @@
         <div id="personalBudgetRow">
           <label class="field-label">Personal budget</label>
           <select id="personalBudgetSelect"></select>
-          <label class="field-label">Account to post to</label>
+          <label class="field-label">ING account</label>
           <select id="personalAccountSelect"></select>
+          <label class="field-label">NAB Qantas account (optional)</label>
+          <select id="personalNabAccountSelect"></select>
         </div>
         <div id="businessBudgetRow" class="hidden">
           <label class="field-label">Bodega budget</label>
@@ -424,6 +426,13 @@
             <input type="file" id="ynabFile" accept=".csv" style="width:100%">
             <div class="filename" id="ynabFileName"></div>
           </div>
+        </div>
+      </div>
+      <div id="nabRow" class="hidden">
+        <label class="field-label">NAB Qantas statement (CSV) — optional, leave blank if not reconciling</label>
+        <div class="upload-zone">
+          <input type="file" id="nabFile" accept=".csv" multiple style="width:100%">
+          <div class="filename" id="nabFileName"></div>
         </div>
       </div>
       <div id="amexRow" class="hidden">

@@ -106,7 +106,53 @@ function parseAMEX(textsArray) {
   return out;
 }
 
-// ---------- YNAB export ----------
+// ---------- NAB credit card export ----------
+// Columns: Date,Amount,Account Number,,Transaction Type,Transaction Details,Balance,Category,Merchant Name,Processed On
+// Date format: "12 Jul 26" (D MMM YY)
+// Sign convention: same as ING — negative = money out (spend), positive = payment/credit in.
+// The "Merchant Name" column is already clean (e.g. "Cafe Mellow Fellow", "Uber Eats")
+// so we use it as the primary desc, falling back to "Transaction Details" if blank.
+// Multiple exports may overlap, so dedup by (date, amount, transactionDetails).
+function parseNAB(textsArray) {
+  const MONTHS = { Jan:1, Feb:2, Mar:3, Apr:4, May:5, Jun:6, Jul:7, Aug:8, Sep:9, Oct:10, Nov:11, Dec:12 };
+
+  function nabDateToIso(s) {
+    // "12 Jul 26" -> "2026-07-12"
+    const [d, mon, yy] = s.trim().split(" ");
+    const year = 2000 + parseInt(yy, 10);
+    const month = String(MONTHS[mon] || 1).padStart(2, "0");
+    return `${year}-${month}-${d.padStart(2, "0")}`;
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const text of textsArray) {
+    const objs = rowsToObjects(parseCSV(text));
+    for (const o of objs) {
+      if (!o.Date || !o.Amount) continue;
+      const amount = moneyToNumber(o.Amount);
+      if (amount === 0) continue; // skip $0 rows
+      const isoDate = nabDateToIso(o.Date);
+      const txDetails = (o["Transaction Details"] || "").trim();
+      const merchantName = (o["Merchant Name"] || "").trim();
+      // use Merchant Name as the primary human-readable desc if available
+      const desc = merchantName || txDetails;
+      const key = `${isoDate}|${amount}|${txDetails}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        date: isoDate,
+        desc,
+        rawDesc: txDetails, // keep raw for dedup across overlapping exports
+        amount: round2(amount), // already signed correctly: negative = spend
+        source: "NAB"
+      });
+    }
+  }
+  return out;
+}
+
+
 // Columns: Account,Flag,Date,Payee,Category Group/Category,Category Group,Category,Memo,Outflow,Inflow,Cleared
 function parseYNAB(text) {
   const objs = rowsToObjects(parseCSV(text));
