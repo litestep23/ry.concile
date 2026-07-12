@@ -638,7 +638,7 @@ async function syncToYnab() {
     const milliunits = Math.round(row.amount * 1000);
     const dedupeKey = `${milliunits}:${row.date}`;
     occurrenceCounter[dedupeKey] = (occurrenceCounter[dedupeKey] || 0) + 1;
-    const importId = YnabClient.buildImportId(milliunits, row.date, occurrenceCounter[dedupeKey]);
+    const importId = YnabClient.buildImportId(milliunits, row.date, payee, occurrenceCounter[dedupeKey]);
 
     toCreate.push({
       account_id: targetAccountId,
@@ -667,21 +667,68 @@ async function syncToYnab() {
     const created = res?.data?.transactions || [];
     const duplicates = res?.data?.duplicate_import_ids || [];
     logLine(`Created: ${created.length}`);
+
     if (duplicates.length > 0) {
-      logLine(`Skipped as duplicates (already synced previously): ${duplicates.length}`);
+      logLine(`Skipped as duplicates: ${duplicates.length}`);
+
+      if (created.length === 0) {
+        // All were blocked as duplicates — these import_ids were registered by
+        // a previous failed sync attempt. The transactions don't actually exist
+        // in YNAB. Show a force-retry button to re-submit without import_ids.
+        setStatus("syncStatus", `All ${duplicates.length} transaction(s) blocked as duplicates from a previous failed sync — click Force Retry to create them anyway.`, "error");
+        showForceRetryButton(budgetId, toCreate);
+      } else {
+        setStatus("syncStatus", `Synced — ${created.length} created, ${duplicates.length} already existed in YNAB.`, "ok");
+        trs.forEach(tr => { if (tr.querySelector(".rowInclude")?.checked) tr.remove(); });
+      }
+    } else {
+      setStatus("syncStatus", `Synced — ${created.length} created.`, "ok");
+      trs.forEach(tr => { if (tr.querySelector(".rowInclude")?.checked) tr.remove(); });
     }
-    setStatus("syncStatus", `Synced — ${created.length} created, ${duplicates.length} already existed.`, "ok");
-    // remove synced rows from the table
-    trs.forEach(tr => {
-      const checkbox = tr.querySelector(".rowInclude");
-      if (checkbox.checked) tr.remove();
-    });
   } catch (e) {
     logLine(`Error: ${e.message}`);
     setStatus("syncStatus", e.message, "error");
   } finally {
     el("btnSync").disabled = false;
   }
+}
+
+function showForceRetryButton(budgetId, toCreate) {
+  // remove any existing force retry button first
+  const existing = document.getElementById("btnForceRetry");
+  if (existing) existing.remove();
+
+  const btn = document.createElement("button");
+  btn.id = "btnForceRetry";
+  btn.className = "secondary";
+  btn.textContent = "Force Retry (skip duplicate check)";
+  btn.style.marginLeft = "12px";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Retrying…";
+    logLine("Force retrying without import_ids…");
+    try {
+      // strip import_id so YNAB can't block on previously-seen IDs
+      const stripped = toCreate.map(({ import_id, ...rest }) => rest);
+      const res = await YnabClient.createTransactions(budgetId, stripped);
+      const created = res?.data?.transactions || [];
+      logLine(`Force retry created: ${created.length}`);
+      setStatus("syncStatus", `Force retry succeeded — ${created.length} transaction(s) created.`, "ok");
+      btn.remove();
+      // clear the review table rows that were just synced
+      document.querySelectorAll("table.review tbody tr").forEach(tr => {
+        if (tr.querySelector(".rowInclude")?.checked) tr.remove();
+      });
+    } catch (e) {
+      logLine(`Force retry error: ${e.message}`);
+      setStatus("syncStatus", e.message, "error");
+      btn.disabled = false;
+      btn.textContent = "Force Retry (skip duplicate check)";
+    }
+  });
+
+  // append next to the sync status line
+  el("syncStatus").after(btn);
 }
 
 // ---------- helpers ----------

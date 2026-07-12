@@ -77,6 +77,26 @@ const YnabClient = {
     return out;
   },
 
+  // Returns category groups only, for picking a parent group when creating a new category.
+  // [{id, name}]
+  async listCategoryGroups(budgetId) {
+    const data = await this._get(`/budgets/${budgetId}/categories`);
+    return data.data.category_groups
+      .filter(g => !g.hidden && !g.deleted)
+      .map(g => ({ id: g.id, name: g.name }));
+  },
+
+  // Creates a new category within an existing category group.
+  // YNAB's API requires a category_group_id — categories can't be created
+  // "loose," so the caller must pick (or create) a group first.
+  async createCategory(budgetId, categoryGroupId, name) {
+    const data = await this._post(`/budgets/${budgetId}/categories`, {
+      category: { category_group_id: categoryGroupId, name }
+    });
+    const c = data.data.category;
+    return { id: c.id, name: c.name, group_id: c.category_group_id };
+  },
+
   // Pull existing transactions for a budget (optionally a single account) so the
   // app can build a payee/category history model for guessing.
   // since_date format: YYYY-MM-DD
@@ -90,9 +110,16 @@ const YnabClient = {
   },
 
   // Build a deterministic import_id so re-running a sync never double-creates.
-  // Mirrors YNAB's own format loosely: RECON:<milliunits>:<date>:<n>
-  buildImportId(amountMilliunits, isoDate, occurrence) {
-    return `RECON:${amountMilliunits}:${isoDate}:${occurrence}`;
+  // Includes a short hash of the payee name so same-amount/same-date transactions
+  // from different merchants don't collide (e.g. two $10.35 charges on the same day).
+  // Format: RECON:<milliunits>:<date>:<payeeHash>:<n>
+  buildImportId(amountMilliunits, isoDate, payeeName, occurrence) {
+    // simple djb2-style hash of the payee string, kept short (base36, 6 chars)
+    let hash = 5381;
+    const s = (payeeName || "").toUpperCase();
+    for (let i = 0; i < s.length; i++) hash = ((hash << 5) + hash) + s.charCodeAt(i);
+    const shortHash = Math.abs(hash >>> 0).toString(36).slice(0, 6);
+    return `RECON:${amountMilliunits}:${isoDate}:${shortHash}:${occurrence}`;
   },
 
   // transactions: array of YNAB transaction objects (already shaped correctly)
