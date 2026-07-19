@@ -302,6 +302,10 @@ async function readFileText(file) {
 
 async function runMatch() {
   setStatus("matchStatus", "Reading files…", "");
+  // clear log from any previous sync session
+  const logBox = el("logBox");
+  logBox.classList.add("hidden");
+  logBox.textContent = "";
   try {
     const bankTexts = await Promise.all(bankFiles.map(readFileText));
     const ynabText = await readFileText(ynabFile);
