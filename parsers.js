@@ -135,9 +135,12 @@ function parseNAB(textsArray) {
       const isoDate = nabDateToIso(o.Date);
       const txDetails = (o["Transaction Details"] || "").trim();
       const merchantName = (o["Merchant Name"] || "").trim();
-      // use Merchant Name as the primary human-readable desc if available
-      const desc = merchantName || txDetails;
-      const key = `${isoDate}|${amount}|${txDetails}`;
+      const txType = (o["Transaction Type"] || "").trim();
+      const balance = (o["Balance"] || "").trim(); // unique per transaction even for identical charges
+      const desc = merchantName || txDetails || txType;
+      // include balance in dedup key so two genuine same-merchant/same-amount/same-day
+      // purchases (e.g. buying the same thing twice) aren't incorrectly collapsed into one
+      const key = `${isoDate}|${amount}|${txDetails}|${balance}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
