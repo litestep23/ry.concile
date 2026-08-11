@@ -500,11 +500,28 @@
       </div>
     </div>
 
+    <div class="panel" style="background:var(--accent-soft);border-color:var(--accent);margin-bottom:14px;" id="balanceCheckPanel">
+      <h2 style="color:var(--accent)">Balance check (optional but recommended)</h2>
+      <div class="row">
+        <div>
+          <label class="field-label">Bank app balance (what your bank shows)</label>
+          <input type="text" id="bankBalance" placeholder="e.g. 1193.59">
+        </div>
+        <div>
+          <label class="field-label">YNAB balance (what YNAB shows)</label>
+          <input type="text" id="ynabBalance" placeholder="e.g. 1181.46">
+        </div>
+      </div>
+      <div class="help-text">Enter both balances and the tool will verify its findings match the gap exactly — catching any discrepancies the matcher missed.</div>
+    </div>
+
     <button class="primary" id="btnRunMatch" disabled>Find discrepancies</button>
     <div class="status-line" id="matchStatus"></div>
   </div>
 
   <div id="resultsArea" class="hidden">
+    <div id="dateRangeWarning" class="hidden" style="background:var(--warn-soft);border:1px solid var(--warn);border-radius:10px;padding:14px 18px;margin-bottom:14px;font-size:13.5px;color:var(--warn);"></div>
+    <div id="balanceVerification" class="hidden" style="border-radius:10px;padding:14px 18px;margin-bottom:14px;font-size:13.5px;"></div>
     <div class="summary-bar" id="summaryBar"></div>
     <div class="panel" style="padding: 0;">
       <div style="padding: 22px 22px 0;">

@@ -331,6 +331,24 @@ async function runMatch() {
 
     const ynabTxns = parseYNAB(ynabText);
 
+    // --- IMPROVEMENT 1: Date range validation ---
+    const bankDates = bankTxns.map(t => t.date).sort();
+    const ynabDates = ynabTxns.map(t => t.date).sort();
+    if (bankDates.length && ynabDates.length) {
+      const bankFrom = bankDates[0], bankTo = bankDates[bankDates.length - 1];
+      const ynabFrom = ynabDates[0], ynabTo = ynabDates[ynabDates.length - 1];
+      const warnings = [];
+      if (bankFrom < ynabFrom) warnings.push(`Bank export starts ${bankFrom} but YNAB export starts ${ynabFrom} — transactions before ${ynabFrom} can't be matched and may show as false gaps.`);
+      if (bankTo > ynabTo) warnings.push(`Bank export ends ${bankTo} but YNAB export ends ${ynabTo} — transactions after ${ynabTo} will appear missing even if you've entered them.`);
+      const warn = el("dateRangeWarning");
+      if (warnings.length > 0) {
+        warn.innerHTML = `⚠️ <strong>Date range mismatch detected</strong><br>${warnings.join('<br>')}`;
+        warn.classList.remove("hidden");
+      } else {
+        warn.classList.add("hidden");
+      }
+    }
+
     setStatus("matchStatus", "Pulling YNAB history for category guessing…", "");
     const budgetId = state.mode === "personal" ? state.personal.budgetId : state.business.budgetId;
     const categoriesForHistory = state.mode === "personal" ? state.personal.categories : state.business.categories;
@@ -436,6 +454,31 @@ async function runMatch() {
     renderSummary(result, bankTxns.length, { from, to });
     renderReviewTable(categories, payees);
     el("resultsArea").classList.remove("hidden");
+
+    // --- IMPROVEMENT 2: Balance verification ---
+    const bankBalInput = parseFloat(el("bankBalance").value.replace(/[^0-9.]/g, "")) || null;
+    const ynabBalInput = parseFloat(el("ynabBalance").value.replace(/[^0-9.]/g, "")) || null;
+    const verifyEl = el("balanceVerification");
+    if (bankBalInput !== null && ynabBalInput !== null) {
+      const expectedGap = Math.abs(bankBalInput - ynabBalInput);
+      const foundGap = Math.abs(result.missing.reduce((s, t) => s + t.amount, 0));
+      const diff = Math.abs(expectedGap - foundGap);
+      if (diff < 0.02) {
+        verifyEl.style.background = "var(--accent-soft)";
+        verifyEl.style.border = "1px solid var(--accent)";
+        verifyEl.style.color = "var(--accent)";
+        verifyEl.innerHTML = `✓ <strong>Balance check passed</strong> — the ${result.missing.length} missing transaction(s) found account for exactly the $${expectedGap.toFixed(2)} gap between your bank and YNAB.`;
+      } else {
+        verifyEl.style.background = "var(--warn-soft)";
+        verifyEl.style.border = "1px solid var(--warn)";
+        verifyEl.style.color = "var(--warn)";
+        verifyEl.innerHTML = `⚠️ <strong>Balance check failed</strong> — expected gap $${expectedGap.toFixed(2)}, but missing transactions only add up to $${foundGap.toFixed(2)} (difference: $${diff.toFixed(2)}). There may be a phantom entry in YNAB or a transaction entered at the wrong amount.`;
+      }
+      verifyEl.classList.remove("hidden");
+    } else {
+      verifyEl.classList.add("hidden");
+    }
+
     setStatus("matchStatus", `Done — ${result.missing.length} gap(s) found out of ${bankTxns.length} bank transactions.`, "ok");
   } catch (e) {
     console.error(e);
@@ -828,7 +871,52 @@ async function syncToYnab() {
     return;
   }
 
+  // --- IMPROVEMENT 3: Duplicate detection ---
+  // Fetch live YNAB transactions and warn if any transaction being created
+  // looks like it already exists (same amount + date within 3 days + similar payee)
   el("btnSync").disabled = true;
+  setStatus("syncStatus", "Checking for existing duplicates in YNAB…", "");
+  try {
+    const budgetId = state.mode === "personal" ? state.personal.budgetId : state.business.budgetId;
+    const liveTxns = await YnabClient.listTransactions(budgetId, {});
+    const suspectedDupes = [];
+
+    for (const t of toCreate) {
+      const tDate = new Date(t.date + "T00:00:00Z");
+      const match = liveTxns.find(lt => {
+        if (lt.amount !== t.amount) return false;
+        const ltDate = new Date(lt.date + "T00:00:00Z");
+        const daysDiff = Math.abs((tDate - ltDate) / 86400000);
+        if (daysDiff > 3) return false;
+        // check payee similarity if both have payee names
+        if (t.payee_name && lt.payee_name) {
+          const a = t.payee_name.toLowerCase();
+          const b = lt.payee_name.toLowerCase();
+          if (!a.includes(b.slice(0,4)) && !b.includes(a.slice(0,4))) return false;
+        }
+        return true;
+      });
+      if (match) {
+        suspectedDupes.push({
+          creating: `${t.date} ${t.payee_name || ""} $${Math.abs(t.amount/1000).toFixed(2)}`,
+          existing: `${match.date} ${match.payee_name || ""} $${Math.abs(match.amount/1000).toFixed(2)}`
+        });
+      }
+    }
+
+    if (suspectedDupes.length > 0) {
+      const dupeList = suspectedDupes.map(d => `• ${d.creating} (matches existing: ${d.existing})`).join("\n");
+      const proceed = confirm(`⚠️ Duplicate warning — ${suspectedDupes.length} transaction(s) may already exist in YNAB:\n\n${dupeList}\n\nProceed anyway?`);
+      if (!proceed) {
+        el("btnSync").disabled = false;
+        setStatus("syncStatus", "Sync cancelled — check for duplicates in YNAB before retrying.", "error");
+        return;
+      }
+    }
+  } catch (e) {
+    // non-fatal — if the check fails, proceed with sync anyway
+    console.warn("Duplicate check failed:", e.message);
+  }
   setStatus("syncStatus", `Syncing ${toCreate.length} transaction(s)…`, "");
   logLine(`Posting ${toCreate.length} transaction(s) to budget ${budgetId}…`, true);
 
